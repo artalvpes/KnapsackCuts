@@ -14,7 +14,7 @@ separate_knapsack_cut(n, b, a, x, SepParams)
 ...with parameters:
 
 SepParams = Dict(\
-   "minimum_cut_violation" => 5e-4,\
+   "minimum_cut_violation" => 1e-4,\
    "separation_point_precision" => 1e-7,\
    "coefficient_tolerance" => 1e-7\
 )
