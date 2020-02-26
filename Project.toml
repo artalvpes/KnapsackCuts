@@ -1,0 +1,13 @@
+name = "KnapsackCuts"
+uuid = "3a6ed2e1-8413-4d63-b7ab-07a26699216b"
+authors = ["artur <artur.a.pessoa@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+BinDeps = "9e28174c-4ba2-5203-b857-d8d62c4213ee"
+CPLEX = "a076750e-1247-5638-91d2-ce28b192dca0"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+MathProgBase = "fdba3010-5040-5b88-9595-932c9decdf73"
+PisingerKnapsack = "86747bd8-1d8a-11e9-0cc0-0f872c0335c6"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
