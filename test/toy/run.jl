@@ -9,7 +9,7 @@
 using KnapsackCuts
 
 const SepParams = Dict(
-    "minimum_cut_violation" => 5e-4,
+    "minimum_cut_violation" => 1e-4,
     "separation_point_precision" => 1e-7,
     "coefficient_tolerance" => 1e-7
 )
@@ -33,6 +33,12 @@ function run_toy(inst::Int)
     b = Int(numbers[2])
     a = Int.(numbers[3:(n + 2)])
     _x_ = numbers[(n + 3):(2 * n + 2)]
+
+    # show the data
+    @show n
+    @show b
+    @show a
+    @show _x_
 
     # call the separation algorithm
     return separate_knapsack_cut(n, b, a, _x_, SepParams)
