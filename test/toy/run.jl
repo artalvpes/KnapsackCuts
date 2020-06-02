@@ -44,5 +44,13 @@ function run_toy(inst::Int)
     return separate_knapsack_cut(n, b, a, _x_, SepParams)
 end
 
+println("=====================================================")
 cut = run_toy(1)
 @show cut
+println("-----------------------------------------------------")
+cut = run_toy(2)
+@show cut
+println("-----------------------------------------------------")
+cut = run_toy(3)
+@show cut
+println("=====================================================")

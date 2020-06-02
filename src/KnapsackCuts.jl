@@ -116,6 +116,7 @@ function separate_knapsack_cut(
     # if there are js in nz with a[j] > b, return a cut setting them to zero
     big = [j for j in nz if a[j] > b]
     if !isempty(big)
+        big = [j for j in 1:n if a[j] > b]   # lift this cut for null _x_[j]
         return CutData([1.0 for j in big], big, 0.0)
     end
 
@@ -165,13 +166,13 @@ function separate_knapsack_cut(
         end
     end
 
-    # apply the sequential lifting to the cut
+    # apply the sequential lifting to the cut (except for infeasible items)
     all_coeffs = fill(0, n)
     for k in 1:length(nz)
         all_coeffs[nz[k]] = coeffs[k]
     end
     for j in 1:n
-        if _x_[j] <= ϵ
+        if (_x_[j] <= ϵ) && (a[j] <= b)
             z, S′ = minknap(all_coeffs, a, b - a[j])
             all_coeffs[j] = rhs - z
         end
