@@ -18,8 +18,12 @@ struct CutData
     rhs::Float64
 end
 
-function build_initial_solutions(b::Int, a::Array{Int}, _x_::Array{Float64}, nz::Array{Int}
-    )::Array{Array{Int}}
+function build_initial_solutions(
+    b::Int,
+    a::Array{Int},
+    _x_::Array{Float64},
+    nz::Array{Int},
+)::Array{Array{Int}}
     # sort the nonzero items by nonincreasing order of _x_ / a
     ratios = [(_x_[j] / a[j], j) for j in nz]
     sort!(ratios, rev = true)
@@ -41,7 +45,7 @@ function build_initial_solutions(b::Int, a::Array{Int}, _x_::Array{Float64}, nz:
     S = [s]
 
     # build more solutions until all items are covered
-    for l in (length(s) + 1):length(ord)
+    for l in (length(s)+1):length(ord)
         if l > lastCovered
             load = a[ord[l]]
             s = [ord[l]]
@@ -77,18 +81,18 @@ function rationalize(coeffs::Array{Float64}, tolerance::Float64)::Tuple{Array{In
     # keep dividing each coefficient by the immediately smaller one while the second is non-zero
     while work[2] > tolerance
         # divide each coefficient but the smallest one
-        for j in 1:(length(work) - 1)
+        for j in 1:(length(work)-1)
             # check the stopping condition
-            if work[j + 1] <= tolerance
+            if work[j+1] <= tolerance
                 break
             end
 
             # replace the largest of work[j] and work[j + 1] by the remainder
-            work[j] -= floor(work[j] / work[j + 1]) * work[j + 1]
+            work[j] -= floor(work[j] / work[j+1]) * work[j+1]
 
             # treat negative errors
-            if work[j] > (work[j + 1] / 2)
-                work[j] = work[j + 1] - work[j]
+            if work[j] > (work[j+1] / 2)
+                work[j] = work[j+1] - work[j]
             end
         end
 
@@ -101,7 +105,11 @@ function rationalize(coeffs::Array{Float64}, tolerance::Float64)::Tuple{Array{In
 end
 
 function separate_knapsack_cut(
-    n::Int, b::Int, a::Array{Int}, _x_::Array{Float64}, params::Dict{String, Float64}
+    n::Int,
+    b::Int,
+    a::Array{Int},
+    _x_::Array{Float64},
+    params::Dict{String,Float64},
 )::CutData
 
     # get used parameters
@@ -124,7 +132,9 @@ function separate_knapsack_cut(
     S = build_initial_solutions(b, a, _x_, nz)
 
     # create the model object
-    sep = Model(solver=CplexSolver(CPX_PARAM_SCRIND=0, CPX_PARAM_THREADS=1))
+    sep = Model(CPLEX.Optimizer)
+    set_optimizer_attribute(sep, "CPX_PARAM_SCRIND", 0)
+    set_optimizer_attribute(sep, "CPX_PARAM_THREADS", 1)
 
     # set the initial model formulation
     @variable(sep, α[j in nz] >= 0.0)
@@ -138,12 +148,13 @@ function separate_knapsack_cut(
     prev_S = zeros(Cint, length(nz))
     while !converged
         # solve the separation LP, check the violation and get the solution
-        status = solve(sep)
-        (status != :Optimal) && error("KnapsackCuts: could not solve the separation LP")
-        if getobjectivevalue(sep) < (1.0 + min_violation)
+        optimize!(sep)
+        status = termination_status(sep)
+        (status != MOI.OPTIMAL) && error("KnapsackCuts: could not solve the separation LP")
+        if objective_value(sep) < (1.0 + min_violation)
             return CutData(Float64[], Int[], 0.0)
         end
-        _α_ = [getvalue(α[j]) for j in nz]
+        _α_ = [value(α[j]) for j in nz]
         #println(M)
         #@show _α_
         #@show nz
@@ -179,9 +190,10 @@ function separate_knapsack_cut(
     end
 
     # return the lifted cut
-    return CutData([Float64(all_coeffs[j]) for j in 1:n if all_coeffs[j] > 0],
+    return CutData(
+        [Float64(all_coeffs[j]) for j in 1:n if all_coeffs[j] > 0],
         [j for j in 1:n if all_coeffs[j] > 0],
-        Float64(rhs)
+        Float64(rhs),
     )
 end
 
