@@ -1,6 +1,6 @@
 module KnapsackCuts
 
-using JuMP, CPLEX, PisingerKnapsack
+using JuMP, Gurobi, Knapsacks
 
 #
 # Julia implementation of the Knapsack cut separation proposed in (Avella et al, 2010).
@@ -17,6 +17,9 @@ struct CutData
     indices::Array{Int}
     rhs::Float64
 end
+
+Base.:(==)(a::CutData, b::CutData) =
+    (a.coeffs == b.coeffs && a.indices == b.indices && a.rhs == b.rhs)
 
 function build_initial_solutions(b::Int, a::Array{Int}, _x_::Array{Float64}, nz::Array{Int}
     )::Array{Array{Int}}
@@ -111,7 +114,7 @@ function separate_knapsack_cut(
 
     # find the nonzero components in the sep point
     nz = [j for j in 1:n if _x_[j] > ϵ]
-    a_nz = Cint[a[j] for j in nz]
+    a_nz = [a[j] for j in nz]
 
     # if there are js in nz with a[j] > b, return a cut setting them to zero
     big = [j for j in nz if a[j] > b]
@@ -124,7 +127,9 @@ function separate_knapsack_cut(
     S = build_initial_solutions(b, a, _x_, nz)
 
     # create the model object
-    sep = Model(solver=CplexSolver(CPX_PARAM_SCRIND=0, CPX_PARAM_THREADS=1))
+    sep = Model(optimizer_with_attributes(
+        Gurobi.Optimizer, "OutputFlag" => false, "Threads" => 1
+    ))
 
     # set the initial model formulation
     @variable(sep, α[j in nz] >= 0.0)
@@ -135,15 +140,16 @@ function separate_knapsack_cut(
     coeffs = Int[]
     rhs = 0
     converged = false
-    prev_S = zeros(Cint, length(nz))
+    prev_S = Int[]
     while !converged
         # solve the separation LP, check the violation and get the solution
-        status = solve(sep)
-        (status != :Optimal) && error("KnapsackCuts: could not solve the separation LP")
-        if getobjectivevalue(sep) < (1.0 + min_violation)
+        optimize!(sep)
+        status = termination_status(sep)
+        (status != OPTIMAL) && error("KnapsackCuts: could not solve the separation LP")
+        if objective_value(sep) < (1.0 + min_violation)
             return CutData(Float64[], Int[], 0.0)
         end
-        _α_ = [getvalue(α[j]) for j in nz]
+        _α_ = [value(α[j]) for j in nz]
         #println(M)
         #@show _α_
         #@show nz
@@ -152,14 +158,14 @@ function separate_knapsack_cut(
         coeffs, rhs = rationalize(_α_, tolerance)
 
         # run the separation algorithm for the current (rationalized) solution
-        z, S′ = minknap(coeffs, a_nz, Cint(b))
+        z, S′ = solveKnapsack(Knapsack(b, a_nz, coeffs))
         if z > rhs
             if S′ == prev_S
                 @warn "KnapsackCuts: separation failed due to numerical issues!"
                 converged = true
             else
-                @constraint(sep, sum(α[nz[k]] for k in 1:length(nz) if S′[k] == 1) <= 1.0)
-                prev_S .= S′
+                @constraint(sep, sum(α[nz[k]] for k in S′) <= 1.0)
+                prev_S = S′
             end
         else
             converged = true
@@ -168,12 +174,12 @@ function separate_knapsack_cut(
 
     # apply the sequential lifting to the cut (except for infeasible items)
     all_coeffs = fill(0, n)
-    for k in 1:length(nz)
+    for k in eachindex(nz)
         all_coeffs[nz[k]] = coeffs[k]
     end
     for j in 1:n
         if (_x_[j] <= ϵ) && (a[j] <= b)
-            z, S′ = minknap(all_coeffs, a, b - a[j])
+            z, _ = solveKnapsack(Knapsack(b - a[j], a, all_coeffs))
             all_coeffs[j] = rhs - z
         end
     end
