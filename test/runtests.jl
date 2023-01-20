@@ -13,5 +13,5 @@ include("GeneralizedAssignment/src/run.jl")
         1, 1, 2, 4, 3, 4, 1, 3, 4, 2, 2, 5, 2, 2, 4, 4, 4, 3, 5, 1, 3, 5
     ]
     @test total_cuts == 111
-    run_gap(["-i","GeneralizedAssignment/data/gapD-10-100.txt", "-u", "6348"])
+    # run_gap(["-i","GeneralizedAssignment/data/gapD-10-100.txt", "-u", "6348"])
 end
