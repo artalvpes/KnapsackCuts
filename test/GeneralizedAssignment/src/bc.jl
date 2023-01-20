@@ -3,14 +3,10 @@
 using KnapsackCuts
 
 using JuMP
-using CPLEX
-import MathProgBase
+using Gurobi
+using MathOptInterface
 
-const SepParams = Dict(
-    "minimum_cut_violation" => 1e-4,
-    "separation_point_precision" => 1e-7,
-    "coefficient_tolerance" => 1e-7
-)
+const MOI = MathOptInterface
 
 # Note: Instead of using a MIP to convert the Knapsack cut coefficients in integers as in Avella
 # et al (2010), this code runs an extension of the Euclides' algorithm for fractional numbers to
@@ -21,7 +17,13 @@ const SepParams = Dict(
 
 # Solve the Generalized Assignment Problem instance in the file named
 # filename and return the optimal solution, as a job-indexed array of machines, and its cost
-function solve_gap(filename::String, upcutoff::Float64)::Tuple{Array{Int}, Int}
+function solve_gap(filename::String, upcutoff::Float64)::Tuple{Array{Int}, Int, Int}
+    SepParams = Dict(
+        "minimum_cut_violation" => 1e-4,
+        "separation_point_precision" => 1e-7,
+        "coefficient_tolerance" => 1e-7
+    )
+    
     # read the instance data
     f = open(filename, "r")
     numbers = map(y -> parse(Int, y), split(read(f, String)))
@@ -34,28 +36,49 @@ function solve_gap(filename::String, upcutoff::Float64)::Tuple{Array{Int}, Int}
 
     # set the separation parameters
     minimum_cut_violation = SepParams["minimum_cut_violation"]
-    minimum_gap_to_separate = (0.05 / n)
+    minimum_gap_to_separate = (0.07 / n)
 
     # create the model object
-    M = Model(solver=CplexSolver(CPX_PARAM_MIPDISPLAY=4,
-            CPX_PARAM_SCRIND=0, CPX_PARAM_THREADS=1,
-            CPX_PARAM_EPGAP=2e-6, CPX_PARAM_CUTUP=upcutoff))
+    M = direct_model(
+        optimizer_with_attributes(
+            Gurobi.Optimizer, "DisplayInterval" => 1, "LogToConsole" => 0, "LogFile" => "gap.log",
+            "Threads" => 1, "MIPGap" => 2e-6, "Cutoff" => upcutoff
+        )
+    )
 
     # set the model formulation
-    @variable(M, x[i = 0:m, j = 1:n], Bin)
+    @variable(M, x[i = 1:m, j = 1:n], Bin)
     @objective(M, Min, sum(c[i, j] * x[i, j] for i = 1:m, j = 1:n))
     @constraint(M, assign[j = 1:n], sum(x[i, j] for i = 1:m) == 1)
     @constraint(M, cap[i = 1:m],  sum(a[i, j] * x[i, j] for j = 1:n) <= b[i])
 
     # define the cut separation callback function
-    function separate(cb)
+    total_cuts = 0
+    _x_ = Array{Float64, 2}(undef, m, n)
+    function separate(cb_data, cb_where::Cint)
+        if cb_where != GRB_CB_MIPNODE
+            return
+        end
+        resultP = Ref{Cint}()
+        GRBcbget(cb_data, cb_where, GRB_CB_MIPNODE_STATUS, resultP)
+        if resultP[] != GRB_OPTIMAL
+            return  # Solution is something other than optimal.
+        end
+
         # get the optimal solution of the current relaxation
-        _x_ = getvalue(x)
+        Gurobi.load_callback_variable_primal(cb_data, cb_where)
+        node_obj = 0.0
+        for i = 1:m, j = 1:n
+            _x_[i, j] = callback_value(cb_data, x[i, j])
+            node_obj += c[i, j] * _x_[i, j]
+        end
         # @show _x_
 
         # check if the current gap is sufficiently large to justify the separation effort
-        # @show cbgetnodeobjval(cb), MathProgBase.cbgetobj(cb)
-        gap = 1.0 - cbgetnodeobjval(cb) / min(upcutoff, MathProgBase.cbgetobj(cb))
+        best_sol_obj_P = Ref{Float64}()
+        GRBcbget(cb_data, cb_where, GRB_CB_MIPNODE_OBJBST, best_sol_obj_P)
+        # @show node_obj, best_sol_obj_P[]
+        gap = 1.0 - node_obj / min(upcutoff, best_sol_obj_P[])
         if gap < minimum_gap_to_separate
             return
         end
@@ -74,9 +97,11 @@ function solve_gap(filename::String, upcutoff::Float64)::Tuple{Array{Int}, Int}
             end
 
             if violation >= minimum_cut_violation
-                @usercut(cb, sum(cut.coeffs[k] * x[i, cut.indices[k]]
-                    for k in 1:length(cut.coeffs)) <= cut.rhs
+                moi_cut = @build_constraint(
+                    sum(cut.coeffs[k] * x[i, cut.indices[k]] for k in 1:length(cut.coeffs))
+                    <= cut.rhs
                 )
+                MOI.submit(M, MOI.UserCut(cb_data), moi_cut)
                 sum_viol += violation / cut.rhs
                 num_cuts += 1
             end
@@ -84,31 +109,28 @@ function solve_gap(filename::String, upcutoff::Float64)::Tuple{Array{Int}, Int}
 
         if num_cuts > 0
             # println("Found $num_cuts cuts with avg violation $(sum_viol / num_cuts)")
-
-            # tell CPLEX to keep calling this routine in this node
-            unsafe_store!(cb.userinteraction_p, convert(Cint,2), 1)
+            total_cuts += num_cuts
         end
     end
 
     # set the callback cut separation function and the output files, and solve
-    addcutcallback(M, separate)
-    writeLP(M, "gap.lp", genericnames=false)
-    JuMP.build(M)
-    cpxM = getrawsolver(M)
-    CPLEX.set_logfile(cpxM.env, "gap.log")
-    status = solve(M)
+    MOI.set(M, Gurobi.CallbackFunction(), separate)
+    JuMP.write_to_file(M, "gap.lp")
+    println("Solving... see optimization details in file \"gap.log\"")
+    optimize!(M)
+    status = termination_status(M)
 
     # get the solution and return its objective value
     sol = zeros(Int, n)
     cost = 0
-    if status == :Optimal
-        _x_ = getvalue(x)
-        cost = round(Int, getobjectivevalue(M))
+    if status == OPTIMAL
+        _x_ .= value.(x)
+        cost = round(Int, objective_value(M))
         for i = 1:m, j in 1:n
             if _x_[i, j] > 0.5
                 sol[j] = i
             end
         end
     end
-    return (sol, cost)
+    return sol, cost, total_cuts
 end

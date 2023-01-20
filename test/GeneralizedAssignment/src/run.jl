@@ -2,7 +2,7 @@ using ArgParse
 
 include("bc.jl")
 
-function run_gap()
+function run_gap(_ARGS)
    appfolder = dirname(@__FILE__)
 
    function parse_commandline()
@@ -11,13 +11,13 @@ function run_gap()
          "--instance","-i"
             help = "Instance file path"
             arg_type = String
-            default = "data/gapC-5-100.txt"
+            default = "GeneralizedAssignment/data/gapC-5-100.txt"
          "--upcutoff","-u"
             help = "upper cutoff value for the solution cost"
             arg_type = Float64
             default = 1e6
       end
-      return parse_args(ARGS, s)
+      return parse_args(_ARGS, s)
    end
    app = parse_commandline()
 
@@ -27,16 +27,16 @@ function run_gap()
    end
 
    # solve the problem an get the solution
-   sol, cost = solve_gap(app["instance"], app["upcutoff"])
+   sol, cost, total_cuts = solve_gap(app["instance"], app["upcutoff"])
 
    println("########################################################")
    if cost != 0 # Is there a solution?
-      println(sol)
+      println("Solution $sol")
       println("Cost $cost")
    else
       println("Solution not found")
    end
    println("########################################################")
-end
 
-run_gap()
+   return sol, cost, total_cuts
+end
