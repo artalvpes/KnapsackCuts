@@ -2,6 +2,9 @@ module KnapsackCuts
 
 using JuMP, Gurobi, Knapsacks
 
+const knap_env_key = "PISINGER_KNAPSACK_LIB_PATH"
+global knap_path = "$(haskey(ENV, knap_env_key) ? ENV[knap_env_key] : "")"
+
 #
 # Julia implementation of the Knapsack cut separation proposed in (Avella et al, 2010).
 #
@@ -115,6 +118,7 @@ function separate_knapsack_cut(
     # find the nonzero components in the sep point
     nz = [j for j in 1:n if _x_[j] > ϵ]
     a_nz = [a[j] for j in nz]
+    c_a_nz_ = Cint.(a_nz)
 
     # if there are js in nz with a[j] > b, return a cut setting them to zero
     big = [j for j in nz if a[j] > b]
@@ -141,6 +145,8 @@ function separate_knapsack_cut(
     rhs = 0
     converged = false
     prev_S = Int[]
+    c_x_nz_ = Vector{Cint}(undef, length(nz))
+    c_p_nz_ = Vector{Cint}(undef, length(nz))
     while !converged
         # solve the separation LP, check the violation and get the solution
         optimize!(sep)
@@ -158,7 +164,18 @@ function separate_knapsack_cut(
         coeffs, rhs = rationalize(_α_, tolerance)
 
         # run the separation algorithm for the current (rationalized) solution
-        z, S′ = solveKnapsack(Knapsack(b, a_nz, coeffs))
+        if knap_path == ""
+            z, S′ = solveKnapsack(Knapsack(b, a_nz, coeffs))
+        else
+            for j in eachindex(nz)
+                c_p_nz_[j] = coeffs[j]
+            end
+            z = Int(ccall(
+                (:minknap, knap_path), Cint, (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{Cint}, Cint),
+                Cint(length(nz)), c_p_nz_, c_a_nz_, c_x_nz_, Cint(b)
+            ))
+            S′ = [j for j in eachindex(nz) if c_x_nz_[j] != 0]
+        end
         if z > rhs
             if S′ == prev_S
                 @warn "KnapsackCuts: separation failed due to numerical issues!"
@@ -174,13 +191,29 @@ function separate_knapsack_cut(
 
     # apply the sequential lifting to the cut (except for infeasible items)
     all_coeffs = fill(0, n)
+    c_all_coeffs = fill(Cint(0), n)
+    c_a_all_ = Cint.(a)
+    c_x_all_ = Vector{Cint}(undef, n)
     for k in eachindex(nz)
         all_coeffs[nz[k]] = coeffs[k]
+        c_all_coeffs[nz[k]] = Cint(coeffs[k])
     end
+    # @show b, a, coeffs
     for j in 1:n
         if (_x_[j] <= ϵ) && (a[j] <= b)
-            z, _ = solveKnapsack(Knapsack(b - a[j], a, all_coeffs))
-            all_coeffs[j] = rhs - z
+            if knap_path == ""
+                z, _ = solveKnapsack(Knapsack(b - a[j], a, all_coeffs))
+                all_coeffs[j] = rhs - z
+            else
+                z = Int(ccall(
+                    (:minknap, knap_path), Cint,
+                    (Cint, Ptr{Cint}, Ptr{Cint}, Ptr{Cint}, Cint),
+                    Cint(n), c_all_coeffs, c_a_all_, c_x_all_, Cint(b - a[j])
+                ))
+                c_all_coeffs[j] = Cint(rhs - z)
+                all_coeffs[j] = rhs - z
+            end
+            # @show all_coeffs[j]
         end
     end
 
